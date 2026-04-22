@@ -37,6 +37,29 @@ public sealed class UserService(IUserRepository userRepository, IPasswordHasher 
         return MapToDto(user);
     }
 
+    public async Task<UserDto?> AuthenticateAsync(LoginRequest request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            throw new ArgumentException("Email is required.", nameof(request.Email));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Password))
+        {
+            throw new ArgumentException("Password is required.", nameof(request.Password));
+        }
+
+        var user = await userRepository.GetByEmailAsync(request.Email, cancellationToken);
+        if (user is null)
+        {
+            return null;
+        }
+
+        return passwordHasher.Verify(request.Password, user.PasswordHash)
+            ? MapToDto(user)
+            : null;
+    }
+
     public async Task<UserDto?> UpdateAsync(Guid id, UpdateUserRequest request, CancellationToken cancellationToken = default)
     {
         ValidateUpdateRequest(request);

@@ -8,7 +8,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddPostsApplication(this IServiceCollection services)
     {
-        services.AddScoped<IPostQueryService, PostQueryService>();
+        services.AddScoped<IPostService, PostService>();
         return services;
     }
 }

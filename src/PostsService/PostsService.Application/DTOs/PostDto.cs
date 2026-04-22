@@ -1,3 +1,8 @@
 namespace PostsService.Application.DTOs;
 
-public sealed record PostDto(Guid Id, string AuthorUserName, string Caption, DateTimeOffset CreatedAt);
+public sealed record PostDto(
+    Guid Id,
+    Guid UserId,
+    string PostUrl,
+    DateTime TimestampUtc,
+    string PostType);

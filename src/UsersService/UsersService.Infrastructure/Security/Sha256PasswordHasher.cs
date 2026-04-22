@@ -17,4 +17,15 @@ public sealed class Sha256PasswordHasher : IPasswordHasher
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash);
     }
+
+    public bool Verify(string password, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(passwordHash))
+        {
+            return false;
+        }
+
+        var computedHash = Hash(password);
+        return string.Equals(computedHash, passwordHash, StringComparison.Ordinal);
+    }
 }
