@@ -1,12 +1,18 @@
 using PostsService.Application.Abstractions;
 using PostsService.Application.DTOs;
+using System.Text.Json;
 using PostsService.Domain.Entities;
 using PostsService.Domain.Enums;
 using PostsService.Domain.Repositories;
 
 namespace PostsService.Application.Services;
 
-public sealed class PostService(IPostRepository postRepository) : IPostService
+public sealed class PostService(
+    IPostRepository postRepository,
+    IOutboxRepository outboxRepository,
+    IOutboxSignal outboxSignal,
+    IObjectStorageService objectStorageService,
+    IPostsUnitOfWork unitOfWork) : IPostService
 {
     public async Task<IReadOnlyCollection<PostDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
@@ -28,19 +34,74 @@ public sealed class PostService(IPostRepository postRepository) : IPostService
 
     public async Task<PostDto> CreateAsync(Guid authenticatedUserId, CreatePostRequest request, CancellationToken cancellationToken = default)
     {
-        var post = Post.Create(
-            authenticatedUserId,
-            request.PostUrl,
-            ParsePostType(request.PostType));
+        ValidateFileRequest(request.FileStream, request.FileSize, request.FileName);
 
-        await postRepository.AddAsync(post, cancellationToken);
+        var postId = Guid.NewGuid();
+        var objectKey = BuildObjectKey(authenticatedUserId, postId, request.FileName);
+        var uploadedObject = await objectStorageService.UploadAsync(new ObjectStorageUploadRequest
+        {
+            FileStream = request.FileStream,
+            FileSize = request.FileSize,
+            ObjectKey = objectKey,
+            ContentType = NormalizeContentType(request.ContentType)
+        }, cancellationToken);
+
+        Post post;
+        try
+        {
+            post = Post.Create(
+                authenticatedUserId,
+                uploadedObject.ObjectKey,
+                uploadedObject.Url,
+                ParsePostType(request.PostType),
+                postId);
+        }
+        catch
+        {
+            await objectStorageService.DeleteAsync(uploadedObject.ObjectKey, cancellationToken);
+            throw;
+        }
+
+        var integrationEvent = new PostCreatedIntegrationEvent(
+            Guid.NewGuid(),
+            post.Id,
+            post.UserId,
+            post.ObjectKey,
+            post.PostUrl,
+            post.PostType.ToString().ToUpperInvariant(),
+            post.TimestampUtc,
+            DateTime.UtcNow);
+
+        var outboxMessage = OutboxMessage.Create(
+            nameof(PostCreatedIntegrationEvent),
+            nameof(Post),
+            post.Id,
+            JsonSerializer.Serialize(integrationEvent));
+
+        try
+        {
+            await unitOfWork.ExecuteTransactionalAsync(async token =>
+            {
+                await postRepository.AddAsync(post, token);
+                await outboxRepository.AddAsync(outboxMessage, token);
+            }, cancellationToken);
+        }
+        catch
+        {
+            await objectStorageService.DeleteAsync(uploadedObject.ObjectKey, cancellationToken);
+            throw;
+        }
+
+        await outboxSignal.SignalAsync(outboxMessage.Id, cancellationToken);
 
         return MapToDto(post);
     }
 
     public async Task<PostDto?> UpdateAsync(Guid id, Guid authenticatedUserId, UpdatePostRequest request, CancellationToken cancellationToken = default)
     {
-        var post = await postRepository.GetByIdAsync(id, cancellationToken);
+        ValidateFileRequest(request.FileStream, request.FileSize, request.FileName);
+
+        var post = await postRepository.GetByIdForWriteAsync(id, cancellationToken);
         if (post is null)
         {
             return null;
@@ -48,15 +109,38 @@ public sealed class PostService(IPostRepository postRepository) : IPostService
 
         EnsureOwnership(post, authenticatedUserId);
 
-        post.Update(request.PostUrl, ParsePostType(request.PostType));
-        await postRepository.UpdateAsync(post, cancellationToken);
+        var previousObjectKey = post.ObjectKey;
+        var newObjectKey = BuildObjectKey(authenticatedUserId, post.Id, request.FileName);
+        var uploadedObject = await objectStorageService.UploadAsync(new ObjectStorageUploadRequest
+        {
+            FileStream = request.FileStream,
+            FileSize = request.FileSize,
+            ObjectKey = newObjectKey,
+            ContentType = NormalizeContentType(request.ContentType)
+        }, cancellationToken);
+
+        try
+        {
+            post.Update(uploadedObject.ObjectKey, uploadedObject.Url, ParsePostType(request.PostType));
+            await unitOfWork.ExecuteTransactionalAsync(token => postRepository.UpdateAsync(post, token), cancellationToken);
+        }
+        catch
+        {
+            await objectStorageService.DeleteAsync(uploadedObject.ObjectKey, cancellationToken);
+            throw;
+        }
+
+        if (!string.Equals(previousObjectKey, uploadedObject.ObjectKey, StringComparison.Ordinal))
+        {
+            await TryDeleteObjectAsync(previousObjectKey, cancellationToken);
+        }
 
         return MapToDto(post);
     }
 
     public async Task<bool> DeleteAsync(Guid id, Guid authenticatedUserId, CancellationToken cancellationToken = default)
     {
-        var post = await postRepository.GetByIdAsync(id, cancellationToken);
+        var post = await postRepository.GetByIdForWriteAsync(id, cancellationToken);
         if (post is null)
         {
             return false;
@@ -64,7 +148,8 @@ public sealed class PostService(IPostRepository postRepository) : IPostService
 
         EnsureOwnership(post, authenticatedUserId);
 
-        await postRepository.DeleteAsync(post, cancellationToken);
+        await unitOfWork.ExecuteTransactionalAsync(token => postRepository.DeleteAsync(post, token), cancellationToken);
+        await TryDeleteObjectAsync(post.ObjectKey, cancellationToken);
         return true;
     }
 
@@ -96,8 +181,53 @@ public sealed class PostService(IPostRepository postRepository) : IPostService
         return new PostDto(
             post.Id,
             post.UserId,
+            post.ObjectKey,
             post.PostUrl,
             post.TimestampUtc,
             post.PostType.ToString().ToUpperInvariant());
+    }
+
+    private static void ValidateFileRequest(Stream fileStream, long fileSize, string fileName)
+    {
+        if (fileStream is null)
+        {
+            throw new ArgumentException("File is required.", nameof(fileStream));
+        }
+
+        if (fileSize <= 0)
+        {
+            throw new ArgumentException("File is required.", nameof(fileSize));
+        }
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            throw new ArgumentException("File name is required.", nameof(fileName));
+        }
+    }
+
+    private static string BuildObjectKey(Guid userId, Guid postId, string fileName)
+    {
+        var extension = Path.GetExtension(fileName);
+        var safeExtension = string.IsNullOrWhiteSpace(extension) ? ".bin" : extension.ToLowerInvariant();
+        return $"posts/{userId}/{postId}{safeExtension}";
+    }
+
+    private static string NormalizeContentType(string contentType)
+    {
+        return string.IsNullOrWhiteSpace(contentType)
+            ? "application/octet-stream"
+            : contentType.Trim();
+    }
+
+    private async Task TryDeleteObjectAsync(string objectKey, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await objectStorageService.DeleteAsync(objectKey, cancellationToken);
+        }
+        catch
+        {
+            // Keep the main workflow successful even if object cleanup needs retry later.
+        }
     }
 }

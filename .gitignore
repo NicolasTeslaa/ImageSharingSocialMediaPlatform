@@ -121,3 +121,6 @@ publish/
 .env.*
 secrets.json
 appsettings.*.local.json
+infra/posts-cluster/data/
+infra/posts-cluster/router-data/
+infra/posts-cluster/minio-data/

@@ -19,6 +19,15 @@ Cada contexto foi separado em quatro camadas:
 - `PostsService`
 - `APIGateway`
 
+## Resiliencia do PostsService
+
+O `PostsService` foi preparado para usar separacao de leitura e escrita via MySQL Router:
+
+- `PostsWriteDatabase`: endpoint read-write do Router
+- `PostsReadDatabase`: endpoint read-only do Router
+
+Tambem foi adicionada uma infraestrutura local em [infra/posts-cluster/README.md](/C:/repo/ImageSharingSocialMediaPlatform/infra/posts-cluster/README.md) para subir um cluster com 3 nos MySQL e 1 Router.
+
 ## Direcao de dependencias
 
 - `API -> Application`

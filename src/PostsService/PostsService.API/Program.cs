@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Mvc;
 using PostsService.Application;
 using PostsService.Application.Abstractions;
 using PostsService.Application.DTOs;
@@ -47,7 +48,7 @@ app.UseAuthorization();
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<PostsDbContext>();
+    var dbContext = scope.ServiceProvider.GetRequiredService<PostsWriteDbContext>();
     await dbContext.Database.EnsureCreatedAsync();
 }
 
@@ -73,7 +74,8 @@ app.MapGet("/users/{userId:guid}/posts", async (Guid userId, IPostService postSe
 
 app.MapPost("/posts", async (
     ClaimsPrincipal claimsPrincipal,
-    CreatePostRequest request,
+    IFormFile file,
+    [FromForm] string? postType,
     IPostService postService,
     CancellationToken cancellationToken) =>
 {
@@ -84,7 +86,15 @@ app.MapPost("/posts", async (
             return Results.Unauthorized();
         }
 
-        var post = await postService.CreateAsync(authenticatedUserId, request, cancellationToken);
+        await using var stream = file.OpenReadStream();
+        var post = await postService.CreateAsync(authenticatedUserId, new CreatePostRequest
+        {
+            FileStream = stream,
+            FileSize = file.Length,
+            FileName = file.FileName,
+            ContentType = file.ContentType,
+            PostType = postType
+        }, cancellationToken);
         return Results.Created($"/posts/{post.Id}", post);
     }
     catch (ArgumentException exception)
@@ -100,7 +110,8 @@ app.MapPost("/posts", async (
 app.MapPut("/posts/{id:guid}", async (
     Guid id,
     ClaimsPrincipal claimsPrincipal,
-    UpdatePostRequest request,
+    IFormFile file,
+    [FromForm] string? postType,
     IPostService postService,
     CancellationToken cancellationToken) =>
 {
@@ -111,7 +122,15 @@ app.MapPut("/posts/{id:guid}", async (
             return Results.Unauthorized();
         }
 
-        var post = await postService.UpdateAsync(id, authenticatedUserId, request, cancellationToken);
+        await using var stream = file.OpenReadStream();
+        var post = await postService.UpdateAsync(id, authenticatedUserId, new UpdatePostRequest
+        {
+            FileStream = stream,
+            FileSize = file.Length,
+            FileName = file.FileName,
+            ContentType = file.ContentType,
+            PostType = postType
+        }, cancellationToken);
         return post is null ? Results.NotFound() : Results.Ok(post);
     }
     catch (UnauthorizedAccessException)
