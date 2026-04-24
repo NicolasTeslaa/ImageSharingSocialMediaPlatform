@@ -1,6 +1,6 @@
 @SearchService.API_HostAddress = http://localhost:5239
 
-GET {{SearchService.API_HostAddress}}/weatherforecast/
+GET {{SearchService.API_HostAddress}}/search/users?q=ana
 Accept: application/json
 
 ###

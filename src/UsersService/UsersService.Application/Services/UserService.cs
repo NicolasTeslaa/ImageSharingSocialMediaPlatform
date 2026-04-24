@@ -5,7 +5,10 @@ using UsersService.Domain.Repositories;
 
 namespace UsersService.Application.Services;
 
-public sealed class UserService(IUserRepository userRepository, IPasswordHasher passwordHasher) : IUserService
+public sealed class UserService(
+    IUserRepository userRepository,
+    IPasswordHasher passwordHasher,
+    IUserSearchSyncService userSearchSyncService) : IUserService
 {
     public async Task<IReadOnlyCollection<UserDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
@@ -33,6 +36,7 @@ public sealed class UserService(IUserRepository userRepository, IPasswordHasher 
             request.ProfilePictureUrl);
 
         await userRepository.AddAsync(user, cancellationToken);
+        await userSearchSyncService.UpsertAsync(MapToDto(user), cancellationToken);
 
         return MapToDto(user);
     }
@@ -80,6 +84,7 @@ public sealed class UserService(IUserRepository userRepository, IPasswordHasher 
         }
 
         await userRepository.UpdateAsync(user, cancellationToken);
+        await userSearchSyncService.UpsertAsync(MapToDto(user), cancellationToken);
 
         return MapToDto(user);
     }
@@ -93,7 +98,78 @@ public sealed class UserService(IUserRepository userRepository, IPasswordHasher 
         }
 
         await userRepository.DeleteAsync(user, cancellationToken);
+        await userSearchSyncService.DeleteAsync(id, cancellationToken);
         return true;
+    }
+
+    public async Task<FollowResultDto> FollowAsync(Guid followerUserId, Guid followedUserId, CancellationToken cancellationToken = default)
+    {
+        if (followerUserId == Guid.Empty)
+        {
+            throw new ArgumentException("Follower user id is required.", nameof(followerUserId));
+        }
+
+        if (followedUserId == Guid.Empty)
+        {
+            throw new ArgumentException("Followed user id is required.", nameof(followedUserId));
+        }
+
+        if (followerUserId == followedUserId)
+        {
+            throw new InvalidOperationException("A user cannot follow themselves.");
+        }
+
+        await EnsureUserExistsAsync(followerUserId, cancellationToken);
+        await EnsureUserExistsAsync(followedUserId, cancellationToken);
+
+        var existingFollow = await userRepository.GetFollowAsync(followerUserId, followedUserId, cancellationToken);
+        if (existingFollow is not null)
+        {
+            return new FollowResultDto(existingFollow.FollowerUserId, existingFollow.FollowedUserId, existingFollow.CreatedAtUtc);
+        }
+
+        var follow = UserFollow.Create(followerUserId, followedUserId);
+        await userRepository.AddFollowAsync(follow, cancellationToken);
+
+        return new FollowResultDto(follow.FollowerUserId, follow.FollowedUserId, follow.CreatedAtUtc);
+    }
+
+    public async Task<bool> UnfollowAsync(Guid followerUserId, Guid followedUserId, CancellationToken cancellationToken = default)
+    {
+        if (followerUserId == Guid.Empty)
+        {
+            throw new ArgumentException("Follower user id is required.", nameof(followerUserId));
+        }
+
+        if (followedUserId == Guid.Empty)
+        {
+            throw new ArgumentException("Followed user id is required.", nameof(followedUserId));
+        }
+
+        var follow = await userRepository.GetFollowAsync(followerUserId, followedUserId, cancellationToken);
+        if (follow is null)
+        {
+            return false;
+        }
+
+        await userRepository.DeleteFollowAsync(follow, cancellationToken);
+        return true;
+    }
+
+    public async Task<IReadOnlyCollection<Guid>> GetFollowingUserIdsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        if (userId == Guid.Empty)
+        {
+            throw new ArgumentException("User id is required.", nameof(userId));
+        }
+
+        await EnsureUserExistsAsync(userId, cancellationToken);
+        return await userRepository.GetFollowingUserIdsAsync(userId, cancellationToken);
+    }
+
+    public Task<IReadOnlyCollection<UserDto>> GetAllForSearchAsync(CancellationToken cancellationToken = default)
+    {
+        return GetAllAsync(cancellationToken);
     }
 
     private async Task EnsureUniqueAsync(
@@ -112,6 +188,15 @@ public sealed class UserService(IUserRepository userRepository, IPasswordHasher 
         if (existingByEmail is not null && existingByEmail.Id != currentUserId)
         {
             throw new InvalidOperationException("Email is already in use.");
+        }
+    }
+
+    private async Task EnsureUserExistsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var existingUser = await userRepository.GetByIdAsync(userId, cancellationToken);
+        if (existingUser is null)
+        {
+            throw new KeyNotFoundException("User was not found.");
         }
     }
 

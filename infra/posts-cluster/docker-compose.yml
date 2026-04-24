@@ -10,6 +10,7 @@ services:
       - "33061:3306"
     volumes:
       - posts-db-1-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
     command:
       - mysqld
       - --server_id=1
@@ -153,6 +154,27 @@ services:
     networks:
       - posts-cluster
 
+  posts-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.3
+    container_name: posts-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - posts-elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+    networks:
+      - posts-cluster
+
   posts-minio:
     image: minio/minio:latest
     container_name: posts-minio
@@ -200,6 +222,7 @@ volumes:
   posts-db-2-data:
   posts-db-3-data:
   posts-db-router-data:
+  posts-elasticsearch-data:
   posts-minio-data:
 
 configs:

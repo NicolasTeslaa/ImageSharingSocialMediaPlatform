@@ -4,5 +4,5 @@ namespace TimelineService.Application.Abstractions;
 
 public interface ITimelineQueryService
 {
-    Task<IReadOnlyCollection<TimelineItemDto>> GetByUserAsync(string userName, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<TimelineItemDto>> GetFeedAsync(Guid userId, CancellationToken cancellationToken = default);
 }

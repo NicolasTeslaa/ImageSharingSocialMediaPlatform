@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -41,15 +42,14 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseAuthentication();
 app.UseAuthorization();
 
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<UsersDbContext>();
-    await dbContext.Database.EnsureCreatedAsync();
-}
+await EnsureDatabaseCreatedWithRetryAsync<UsersDbContext>(app.Services, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { service = "UsersService", status = "Healthy" }));
 
@@ -124,6 +124,83 @@ app.MapGet("/users/{id:guid}", async (Guid id, IUserService userService, Cancell
     return user is null ? Results.NotFound() : Results.Ok(user);
 }).RequireAuthorization();
 
+app.MapGet("/internal/users/search-export", async (IUserService userService, CancellationToken cancellationToken) =>
+{
+    var users = await userService.GetAllForSearchAsync(cancellationToken);
+    return Results.Ok(users);
+});
+
+app.MapGet("/users/{id:guid}/following", async (Guid id, IUserService userService, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var followingUserIds = await userService.GetFollowingUserIdsAsync(id, cancellationToken);
+        return Results.Ok(followingUserIds);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { message = exception.Message });
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+});
+
+app.MapPost("/users/{id:guid}/follow", async (
+    Guid id,
+    ClaimsPrincipal claimsPrincipal,
+    IUserService userService,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var userIdValue = claimsPrincipal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdValue, out var authenticatedUserId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var follow = await userService.FollowAsync(authenticatedUserId, id, cancellationToken);
+        return Results.Ok(follow);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { message = exception.Message });
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.NotFound(new { message = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { message = exception.Message });
+    }
+}).RequireAuthorization();
+
+app.MapDelete("/users/{id:guid}/follow", async (
+    Guid id,
+    ClaimsPrincipal claimsPrincipal,
+    IUserService userService,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var userIdValue = claimsPrincipal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdValue, out var authenticatedUserId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var deleted = await userService.UnfollowAsync(authenticatedUserId, id, cancellationToken);
+        return deleted ? Results.NoContent() : Results.NotFound();
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { message = exception.Message });
+    }
+}).RequireAuthorization();
+
 app.MapPut("/users/{id:guid}", async (Guid id, UpdateUserRequest request, IUserService userService, CancellationToken cancellationToken) =>
 {
     try
@@ -152,3 +229,61 @@ app.MapDelete("/users/{id:guid}", async (Guid id, IUserService userService, Canc
 }).RequireAuthorization();
 
 app.Run();
+
+static async Task EnsureDatabaseCreatedWithRetryAsync<TDbContext>(IServiceProvider services, ILogger logger, int maxAttempts = 12)
+    where TDbContext : DbContext
+{
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            await using var scope = services.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<TDbContext>();
+            await dbContext.Database.EnsureCreatedAsync();
+            return;
+        }
+        catch (Exception exception) when (IsTransientDatabaseStartupError(exception) && attempt < maxAttempts)
+        {
+            logger.LogWarning(
+                exception,
+                "Unable to connect to database for {DbContext} on attempt {Attempt}/{MaxAttempts}. Retrying in 5s...",
+                typeof(TDbContext).Name,
+                attempt,
+                maxAttempts);
+
+            await Task.Delay(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    await using var finalScope = services.CreateAsyncScope();
+    var finalDbContext = finalScope.ServiceProvider.GetRequiredService<TDbContext>();
+    await finalDbContext.Database.EnsureCreatedAsync();
+}
+
+static bool IsTransientDatabaseStartupError(Exception exception)
+{
+    for (var current = exception; current is not null; current = current.InnerException)
+    {
+        if (current is SocketException or TimeoutException)
+        {
+            return true;
+        }
+
+        var typeName = current.GetType().Name;
+        if (typeName.Contains("MySql", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("EndOfStream", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var message = current.Message;
+        if (message.Contains("Connect Timeout", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("incomplete response", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("connection was aborted", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}

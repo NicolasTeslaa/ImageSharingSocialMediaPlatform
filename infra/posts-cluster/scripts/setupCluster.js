@@ -1,8 +1,12 @@
 const rootPassword = process.env.MYSQL_ROOT_PASSWORD || "root123!";
 const clusterName = process.env.MYSQL_CLUSTER_NAME || "postsCluster";
+const clusterHost = process.env.MYSQL_CLUSTER_HOST || "127.0.0.1";
+const clusterInstancesRaw = process.env.MYSQL_CLUSTER_INSTANCES;
 const appUser = process.env.POSTS_APP_USER || "posts_app";
 const appPassword = process.env.POSTS_APP_PASSWORD || "posts_app_123";
-const dbName = process.env.POSTS_DB_NAME || "ImageSharingPostsDb";
+const postsDbName = process.env.POSTS_DB_NAME || "ImageSharingPostsDb";
+const timelineDbName = process.env.TIMELINE_DB_NAME || "ImageSharingTimelineDb";
+const usersDbName = process.env.USERS_DB_NAME || "ImageSharingUsersDb";
 
 function addInstanceIfNeeded(cluster, uri) {
   try {
@@ -34,11 +38,13 @@ function waitForInstance(uri) {
   throw new Error(`Timed out while waiting for ${uri}.`);
 }
 
-const instances = [
-  "root@127.0.0.1:33061",
-  "root@127.0.0.1:33062",
-  "root@127.0.0.1:33063"
-];
+const instances = clusterInstancesRaw
+  ? clusterInstancesRaw.split(",").map((instance) => instance.trim()).filter(Boolean)
+  : [
+      `root@${clusterHost}:33061`,
+      `root@${clusterHost}:33062`,
+      `root@${clusterHost}:33063`
+    ];
 
 instances.forEach(waitForInstance);
 
@@ -71,9 +77,13 @@ try {
 addInstanceIfNeeded(cluster, instances[1]);
 addInstanceIfNeeded(cluster, instances[2]);
 
-session.runSql(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
+session.runSql(`CREATE DATABASE IF NOT EXISTS \`${postsDbName}\`;`);
+session.runSql(`CREATE DATABASE IF NOT EXISTS \`${timelineDbName}\`;`);
+session.runSql(`CREATE DATABASE IF NOT EXISTS \`${usersDbName}\`;`);
 session.runSql(`CREATE USER IF NOT EXISTS '${appUser}'@'%' IDENTIFIED BY '${appPassword}';`);
-session.runSql(`GRANT ALL PRIVILEGES ON \`${dbName}\`.* TO '${appUser}'@'%';`);
+session.runSql(`GRANT ALL PRIVILEGES ON \`${postsDbName}\`.* TO '${appUser}'@'%';`);
+session.runSql(`GRANT ALL PRIVILEGES ON \`${timelineDbName}\`.* TO '${appUser}'@'%';`);
+session.runSql(`GRANT ALL PRIVILEGES ON \`${usersDbName}\`.* TO '${appUser}'@'%';`);
 session.runSql("FLUSH PRIVILEGES;");
 
 print("Posts InnoDB Cluster configured successfully.");

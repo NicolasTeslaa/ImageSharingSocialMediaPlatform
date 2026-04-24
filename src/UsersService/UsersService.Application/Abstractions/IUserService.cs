@@ -10,4 +10,8 @@ public interface IUserService
     Task<UserDto?> AuthenticateAsync(LoginRequest request, CancellationToken cancellationToken = default);
     Task<UserDto?> UpdateAsync(Guid id, UpdateUserRequest request, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<FollowResultDto> FollowAsync(Guid followerUserId, Guid followedUserId, CancellationToken cancellationToken = default);
+    Task<bool> UnfollowAsync(Guid followerUserId, Guid followedUserId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<Guid>> GetFollowingUserIdsAsync(Guid userId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<UserDto>> GetAllForSearchAsync(CancellationToken cancellationToken = default);
 }

@@ -22,15 +22,17 @@ Esta pasta sobe um cluster local com 3 instancias MySQL, 1 MySQL Router, 1 broke
 
 ## Como subir
 
-1. Instale Docker e MySQL Shell (`mysqlsh`).
-2. Execute `powershell -ExecutionPolicy Bypass -File .\infra\posts-cluster\bootstrap-cluster.ps1`.
+1. Instale Docker.
+2. Opcional: tenha MySQL Shell (`mysqlsh`) instalado localmente. Se nao tiver, o bootstrap aplica um fallback SQL direto no `posts-db-1`.
+3. Execute `powershell -ExecutionPolicy Bypass -File .\infra\posts-cluster\bootstrap-cluster.ps1`.
+4. O script sobe MySQL (cluster + router), Kafka, Elasticsearch e MinIO e aguarda as portas principais ficarem disponiveis.
 
 ## Conexao no PostsService
 
 O `PostsService` foi configurado para usar:
 
-- escrita em `localhost:6446`
-- leitura em `localhost:6447`
+- ambiente local simplificado: `localhost:33061` para Posts, Timeline e Users (`posts_app`)
+- opcional (quando cluster completo estiver ativo): Router em `localhost:6446` (write) e `localhost:6447` (read)
 - Kafka em `localhost:9092`
 - Kafka UI em `http://localhost:8080`
 - MinIO em `http://localhost:9000`

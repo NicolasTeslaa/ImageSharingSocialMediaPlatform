@@ -54,4 +54,34 @@ public sealed class UserRepository(UsersDbContext dbContext) : IUserRepository
         dbContext.Users.Remove(user);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<UserFollow?> GetFollowAsync(Guid followerUserId, Guid followedUserId, CancellationToken cancellationToken = default)
+    {
+        return await dbContext.UserFollows
+            .FirstOrDefaultAsync(
+                follow => follow.FollowerUserId == followerUserId && follow.FollowedUserId == followedUserId,
+                cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<Guid>> GetFollowingUserIdsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        return await dbContext.UserFollows
+            .AsNoTracking()
+            .Where(follow => follow.FollowerUserId == userId)
+            .OrderBy(follow => follow.CreatedAtUtc)
+            .Select(follow => follow.FollowedUserId)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task AddFollowAsync(UserFollow follow, CancellationToken cancellationToken = default)
+    {
+        await dbContext.UserFollows.AddAsync(follow, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeleteFollowAsync(UserFollow follow, CancellationToken cancellationToken = default)
+    {
+        dbContext.UserFollows.Remove(follow);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
 }

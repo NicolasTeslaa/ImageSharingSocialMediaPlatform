@@ -11,4 +11,8 @@ public interface IUserRepository
     Task AddAsync(User user, CancellationToken cancellationToken = default);
     Task UpdateAsync(User user, CancellationToken cancellationToken = default);
     Task DeleteAsync(User user, CancellationToken cancellationToken = default);
+    Task<UserFollow?> GetFollowAsync(Guid followerUserId, Guid followedUserId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<Guid>> GetFollowingUserIdsAsync(Guid userId, CancellationToken cancellationToken = default);
+    Task AddFollowAsync(UserFollow follow, CancellationToken cancellationToken = default);
+    Task DeleteFollowAsync(UserFollow follow, CancellationToken cancellationToken = default);
 }

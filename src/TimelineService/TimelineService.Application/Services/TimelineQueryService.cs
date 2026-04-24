@@ -4,14 +4,22 @@ using TimelineService.Domain.Repositories;
 
 namespace TimelineService.Application.Services;
 
-public sealed class TimelineQueryService(ITimelineRepository timelineRepository) : ITimelineQueryService
+public sealed class TimelineQueryService(
+    ITimelineRepository timelineRepository,
+    IFollowingLookupService followingLookupService) : ITimelineQueryService
 {
-    public async Task<IReadOnlyCollection<TimelineItemDto>> GetByUserAsync(string userName, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyCollection<TimelineItemDto>> GetFeedAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var items = await timelineRepository.GetByUserAsync(userName, cancellationToken);
+        var followedUserIds = await followingLookupService.GetFollowingUserIdsAsync(userId, cancellationToken);
+        if (followedUserIds.Count == 0)
+        {
+            return [];
+        }
+
+        var items = await timelineRepository.GetByUsersAsync(followedUserIds, cancellationToken);
 
         return items
-            .Select(item => new TimelineItemDto(item.Id, item.UserName, item.ContentPreview, item.PublishedAt))
+            .Select(item => new TimelineItemDto(item.PostId, item.UserId, item.ImageUrl, item.TimestampUtc))
             .ToArray();
     }
 }

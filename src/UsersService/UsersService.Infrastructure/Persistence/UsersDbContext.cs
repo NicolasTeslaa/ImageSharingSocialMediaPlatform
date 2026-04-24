@@ -6,6 +6,7 @@ namespace UsersService.Infrastructure.Persistence;
 public sealed class UsersDbContext(DbContextOptions<UsersDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
+    public DbSet<UserFollow> UserFollows => Set<UserFollow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,6 +47,34 @@ public sealed class UsersDbContext(DbContextOptions<UsersDbContext> options) : D
 
             entity.HasIndex(user => user.Email)
                 .IsUnique();
+        });
+
+        modelBuilder.Entity<UserFollow>(entity =>
+        {
+            entity.ToTable("user_follows");
+
+            entity.HasKey(follow => new { follow.FollowerUserId, follow.FollowedUserId });
+
+            entity.Property(follow => follow.FollowerUserId)
+                .IsRequired();
+
+            entity.Property(follow => follow.FollowedUserId)
+                .IsRequired();
+
+            entity.Property(follow => follow.CreatedAtUtc)
+                .IsRequired();
+
+            entity.HasIndex(follow => follow.FollowedUserId);
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(follow => follow.FollowerUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(follow => follow.FollowedUserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

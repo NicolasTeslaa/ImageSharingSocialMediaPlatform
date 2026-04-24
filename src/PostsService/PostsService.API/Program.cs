@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -42,15 +43,14 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseAuthentication();
 app.UseAuthorization();
 
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<PostsWriteDbContext>();
-    await dbContext.Database.EnsureCreatedAsync();
-}
+await EnsureDatabaseCreatedWithRetryAsync<PostsWriteDbContext>(app.Services, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { service = "PostsService", status = "Healthy" }));
 
@@ -105,7 +105,7 @@ app.MapPost("/posts", async (
     {
         return Results.Conflict(new { message = "Unable to persist the post due to a database constraint." });
     }
-}).RequireAuthorization();
+}).RequireAuthorization().DisableAntiforgery();
 
 app.MapPut("/posts/{id:guid}", async (
     Guid id,
@@ -145,7 +145,7 @@ app.MapPut("/posts/{id:guid}", async (
     {
         return Results.Conflict(new { message = "Unable to update the post due to a database constraint." });
     }
-}).RequireAuthorization();
+}).RequireAuthorization().DisableAntiforgery();
 
 app.MapDelete("/posts/{id:guid}", async (
     Guid id,
@@ -170,6 +170,64 @@ app.MapDelete("/posts/{id:guid}", async (
 }).RequireAuthorization();
 
 app.Run();
+
+static async Task EnsureDatabaseCreatedWithRetryAsync<TDbContext>(IServiceProvider services, ILogger logger, int maxAttempts = 12)
+    where TDbContext : DbContext
+{
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            await using var scope = services.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<TDbContext>();
+            await dbContext.Database.EnsureCreatedAsync();
+            return;
+        }
+        catch (Exception exception) when (IsTransientDatabaseStartupError(exception) && attempt < maxAttempts)
+        {
+            logger.LogWarning(
+                exception,
+                "Unable to connect to database for {DbContext} on attempt {Attempt}/{MaxAttempts}. Retrying in 5s...",
+                typeof(TDbContext).Name,
+                attempt,
+                maxAttempts);
+
+            await Task.Delay(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    await using var finalScope = services.CreateAsyncScope();
+    var finalDbContext = finalScope.ServiceProvider.GetRequiredService<TDbContext>();
+    await finalDbContext.Database.EnsureCreatedAsync();
+}
+
+static bool IsTransientDatabaseStartupError(Exception exception)
+{
+    for (var current = exception; current is not null; current = current.InnerException)
+    {
+        if (current is SocketException or TimeoutException)
+        {
+            return true;
+        }
+
+        var typeName = current.GetType().Name;
+        if (typeName.Contains("MySql", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("EndOfStream", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var message = current.Message;
+        if (message.Contains("Connect Timeout", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("incomplete response", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("connection was aborted", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 static bool TryGetAuthenticatedUserId(ClaimsPrincipal claimsPrincipal, out Guid authenticatedUserId)
 {

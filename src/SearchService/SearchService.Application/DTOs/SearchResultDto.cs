@@ -1,3 +1,9 @@
 namespace SearchService.Application.DTOs;
 
-public sealed record SearchResultDto(Guid Id, string Type, string Title, string Snippet);
+public sealed record SearchResultDto(
+    Guid Id,
+    string Name,
+    string UserName,
+    string Email,
+    string? ProfilePictureUrl,
+    DateTime CreatedAtUtc);

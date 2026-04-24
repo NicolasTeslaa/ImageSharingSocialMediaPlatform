@@ -1,3 +1,3 @@
 namespace TimelineService.Domain.Entities;
 
-public sealed record TimelineItem(Guid Id, string UserName, string ContentPreview, DateTimeOffset PublishedAt);
+public sealed record TimelineItem(Guid PostId, Guid UserId, string ImageUrl, DateTime TimestampUtc);

@@ -7,10 +7,11 @@ public sealed class InMemoryServiceRouteRepository : IServiceRouteRepository
 {
     private static readonly IReadOnlyCollection<ServiceRoute> Routes =
     [
-        new("UsersService", "/users", "https://localhost:7001"),
-        new("SearchService", "/search", "https://localhost:7002"),
-        new("TimelineService", "/timeline", "https://localhost:7003"),
-        new("PostsService", "/posts", "https://localhost:7004")
+        new("UsersService", "/users", "http://localhost:5166"),
+        new("UsersService", "/auth", "http://localhost:5166"),
+        new("SearchService", "/search", "http://localhost:5239"),
+        new("TimelineService", "/timeline", "http://localhost:5174"),
+        new("PostsService", "/posts", "http://localhost:5237")
     ];
 
     public Task<IReadOnlyCollection<ServiceRoute>> GetRoutesAsync(CancellationToken cancellationToken = default)

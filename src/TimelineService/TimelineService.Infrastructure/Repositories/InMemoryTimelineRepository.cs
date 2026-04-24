@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using TimelineService.Domain.Entities;
 using TimelineService.Domain.Repositories;
 
@@ -5,19 +6,68 @@ namespace TimelineService.Infrastructure.Repositories;
 
 public sealed class InMemoryTimelineRepository : ITimelineRepository
 {
-    private static readonly IReadOnlyCollection<TimelineItem> Items =
-    [
-        new(Guid.NewGuid(), "ana.dev", "Novo album de retratos urbanos publicado.", DateTimeOffset.UtcNow.AddMinutes(-15)),
-        new(Guid.NewGuid(), "ana.dev", "Bastidores da sessao de fotos com luz natural.", DateTimeOffset.UtcNow.AddHours(-2)),
-        new(Guid.NewGuid(), "bruno.cloud", "Insights sobre feed distribuido e ranking.", DateTimeOffset.UtcNow.AddHours(-5))
-    ];
+    private readonly ConcurrentDictionary<Guid, List<TimelineItem>> _timelines = new();
 
-    public Task<IReadOnlyCollection<TimelineItem>> GetByUserAsync(string userName, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyCollection<TimelineItem>> GetByUserAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var filtered = string.IsNullOrWhiteSpace(userName)
-            ? Items
-            : Items.Where(item => item.UserName.Equals(userName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (!_timelines.TryGetValue(userId, out var items))
+        {
+            return Task.FromResult<IReadOnlyCollection<TimelineItem>>([]);
+        }
 
-        return Task.FromResult(filtered);
+        lock (items)
+        {
+            return Task.FromResult<IReadOnlyCollection<TimelineItem>>(items.ToArray());
+        }
+    }
+
+    public Task<IReadOnlyCollection<TimelineItem>> GetByUsersAsync(IEnumerable<Guid> userIds, CancellationToken cancellationToken = default)
+    {
+        var result = new List<TimelineItem>();
+
+        foreach (var userId in userIds.Distinct())
+        {
+            if (!_timelines.TryGetValue(userId, out var items))
+            {
+                continue;
+            }
+
+            lock (items)
+            {
+                result.AddRange(items);
+            }
+        }
+
+        return Task.FromResult<IReadOnlyCollection<TimelineItem>>(result
+            .OrderByDescending(item => item.TimestampUtc)
+            .ToArray());
+    }
+
+    public Task AddAsync(TimelineItem item, CancellationToken cancellationToken = default)
+    {
+        var timeline = _timelines.GetOrAdd(item.UserId, _ => []);
+
+        lock (timeline)
+        {
+            timeline.RemoveAll(existing => existing.PostId == item.PostId);
+
+            var insertIndex = timeline.FindIndex(existing => existing.TimestampUtc < item.TimestampUtc);
+            if (insertIndex < 0)
+            {
+                timeline.Add(item);
+            }
+            else
+            {
+                timeline.Insert(insertIndex, item);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task ClearAsync(CancellationToken cancellationToken = default)
+    {
+        _timelines.Clear();
+        return Task.CompletedTask;
     }
 }

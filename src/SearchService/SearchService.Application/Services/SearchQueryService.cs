@@ -11,7 +11,13 @@ public sealed class SearchQueryService(ISearchRepository searchRepository) : ISe
         var results = await searchRepository.SearchAsync(term, cancellationToken);
 
         return results
-            .Select(result => new SearchResultDto(result.Id, result.Type, result.Title, result.Snippet))
+            .Select(result => new SearchResultDto(
+                result.Id,
+                result.Name,
+                result.UserName,
+                result.Email,
+                result.ProfilePictureUrl,
+                result.CreatedAtUtc))
             .ToArray();
     }
 }
